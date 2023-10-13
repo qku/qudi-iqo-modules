@@ -75,7 +75,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 APD1: 'c/s'
                 APD2: 'c/s'
                 AI0: 'V'
-            backwards_line_resolution: 50 # optional
+            backwards_line_resolution: 50 # optional default value to be used if not configured in scan settings
             move_velocity: 400e-6 #m/s; This speed is used for scanner movements and avoids jumps from position to position.
     """
 
@@ -90,7 +90,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
     _resolution_ranges: Dict[str, list[float]] = ConfigOption(name='resolution_ranges', missing='error')
     _input_channel_units: Dict[str, str] = ConfigOption(name='input_channel_units', missing='error')
 
-    __backwards_line_resolution: int = ConfigOption(name='backwards_line_resolution', default=50)
+    __default_backwards_line_resolution: int = ConfigOption(name='backwards_line_resolution', default=50)
     __max_move_velocity: float = ConfigOption(name='maximum_move_velocity', default=400e-6)
 
     _threaded = True  # Interfuse is by default not threaded.
@@ -103,7 +103,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         self._scan_settings: Optional[ScanSettings] = None
 
         self._scan_data: Optional[ScanData] = None
-        self.raw_data_container = None
+        self.raw_data_container: Optional[RawDataContainer] = None
 
         self._constraints: Optional[ScanConstraints] = None
 
@@ -165,7 +165,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
         self._constraints = ScanConstraints(axis_objects=tuple(axes),
                                             channel_objects=tuple(channels),
-                                            backscan_configurable=False,  # TODO incorporate in scanning_probe toolchain
+                                            backscan_configurable=True,
                                             has_position_feedback=False,  # TODO incorporate in scanning_probe toolchain
                                             square_px_only=False)  # TODO incorporate in scanning_probe toolchain
 
@@ -240,10 +240,11 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 number_of_scan_lines = settings.resolution[1]
             else:
                 number_of_scan_lines = settings.repetitions
+            backwards_resolution = max(settings.back_resolution, self.__default_backwards_line_resolution)
             self.raw_data_container = RawDataContainer(settings.channels,
                                                        number_of_scan_lines,
                                                        settings.resolution[0],
-                                                       self.__backwards_line_resolution)
+                                                       backwards_resolution)
             self.log.debug(f'New RawDataContainer created.')
 
         self._ni_finite_sampling_io().set_sample_rate(settings.frequency)
@@ -485,6 +486,8 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             with self._thread_lock_data:
                 self.raw_data_container.fill_container(new_data)
                 self._scan_data.data = self.raw_data_container.forwards_data()
+                if self._scan_data.settings.back_resolution > 0:
+                    self._scan_data.back_data = self.raw_data_container.backwards_data()
 
                 if self._check_scan_end_reached():
                     self.stop_scan()
@@ -581,10 +584,10 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                       corresponding voltage 1D numpy arrays for each axis
         """
 
-        # TODO adjust toolchain to incorporate __backwards_line_resolution in settings?
         # TODO maybe need to clip to voltage range in case of float precision error in conversion?
 
         assert isinstance(scan_data, ScanData), 'This function requires a scan_data object as input'
+        backwards_resolution = max(scan_data.settings.back_resolution, self.__default_backwards_line_resolution)
 
         if scan_data.settings.scan_dimension == 1:
 
@@ -596,7 +599,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
             horizontal_return_line = np.linspace(self._position_to_voltage(axis, scan_data.settings.range[0][1]),
                                                  self._position_to_voltage(axis, scan_data.settings.range[0][0]),
-                                                 self.__backwards_line_resolution)
+                                                 backwards_resolution)
             # TODO Return line for 1d included due to possible hysteresis. Might be able to drop it,
             #  but then get_scan_data needs to be changed accordingly
 
@@ -620,7 +623,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
             horizontal_return_line = np.linspace(self._position_to_voltage(horizontal_axis, scan_data.settings.range[0][1]),
                                                  self._position_to_voltage(horizontal_axis, scan_data.settings.range[0][0]),
-                                                 self.__backwards_line_resolution)
+                                                 backwards_resolution)
             # a single back and forth line
             horizontal_single_line = np.concatenate((horizontal, horizontal_return_line))
             # need as much lines as we have in the vertical directions
@@ -636,10 +639,10 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             # during horizontal line, the vertical line keeps its value
             vertical_lines = np.repeat(vertical.reshape(vertical_resolution, 1), horizontal_resolution, axis=1)
             # during backscan of horizontal, the vertical axis increases its value by "one index"
-            vertical_return_lines = np.linspace(vertical[:-1], vertical[1:], self.__backwards_line_resolution).T
+            vertical_return_lines = np.linspace(vertical[:-1], vertical[1:], backwards_resolution).T
             # need to extend the vertical lines at the end, as we reach it earlier then for the horizontal axes
             vertical_return_lines = np.concatenate((vertical_return_lines,
-                                                    np.ones((1, self.__backwards_line_resolution)) * vertical[-1]
+                                                    np.ones((1, backwards_resolution)) * vertical[-1]
                                                     ))
 
             vertical_scan_array = np.concatenate((vertical_lines, vertical_return_lines), axis=1).ravel()

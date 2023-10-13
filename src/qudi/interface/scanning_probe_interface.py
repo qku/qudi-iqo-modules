@@ -81,6 +81,8 @@ class ScanSettings:
     @param float frequency: Scan pixel frequency of the fast axis
     @param str[] position_feedback_axes: optional, names of axes for which to acquire position
                                          feedback during the scan.
+    @param int back_resolution: resolution of the return (backwards) scan for the fast axis,
+                                use a negative value if no backscan data should be retrieved
     @param int repetitions: scan a single axis multiple times, only applicable to 1D scans
     """
 
@@ -90,6 +92,7 @@ class ScanSettings:
     resolution: Tuple[int, ...]
     frequency: float
     position_feedback_axes: Tuple[str, ...] = field(default_factory=tuple)
+    back_resolution: int = -1
     repetitions: int = 1
 
     def __post_init__(self) -> None:
@@ -121,7 +124,9 @@ class ScanSettings:
             range=tuple((i[0], i[1]) for i in dict_repr['range']),
             resolution=tuple(dict_repr['resolution']),
             frequency=dict_repr['frequency'],
-            position_feedback_axes=tuple(dict_repr['position_feedback_axes'])
+            position_feedback_axes=tuple(dict_repr['position_feedback_axes']),
+            back_resolution=dict_repr['back_resolution'],
+            repetitions=dict_repr['repetitions'],
         )
 
     @property
@@ -140,7 +145,7 @@ class ScanConstraints:
     """
     channel_objects: Tuple[ScannerChannel, ...]
     axis_objects: Tuple[ScannerAxis, ...]
-    backscan_configurable: bool  # TODO Incorporate in gui/logic toolchain?
+    backscan_configurable: bool
     has_position_feedback: bool  # TODO Incorporate in gui/logic toolchain?
     square_px_only: bool  # TODO Incorporate in gui/logic toolchain?
 
@@ -163,6 +168,7 @@ class ScanConstraints:
         self.check_channels(settings)
         self.check_axes(settings)
         self.check_feedback(settings)
+        self.check_backscan(settings)
 
     def check_channels(self, settings: ScanSettings) -> None:
         if not set(settings.channels).issubset(self.channels):
@@ -205,6 +211,21 @@ class ScanConstraints:
         if settings.has_position_feedback and not self.has_position_feedback:
             raise ValueError(f'Scanner does not support position feedback.')
 
+    def check_backscan(self, settings: ScanSettings) -> None:
+        if settings.back_resolution < 0:
+            # not configured, nothing to check
+            return
+        if not self.backscan_configurable:
+            raise ValueError('Backwards scan is not configurable.')
+        fast_axis_name = settings.axes[0]
+        fast_axis = self.axes[fast_axis_name]
+        try:
+            fast_axis.resolution.check(settings.back_resolution)
+        except ValueError as e:
+            raise ValueError(f'Backscan resolution out of bounds for fast axis "{fast_axis_name}".') from e
+        except TypeError as e:
+            raise TypeError(f'Backscan resolution type check failed for fast axis "{fast_axis_name}".') from e
+
     def clip(self, settings: ScanSettings) -> ScanSettings:
         self.check_axes(settings)
         clipped_range = []
@@ -243,7 +264,9 @@ class ScanData:
     scanner_target_at_start: Optional[Dict[str, float]] = None
     timestamp: Optional[datetime.datetime] = None
     _data: Optional[Tuple[np.ndarray, ...]] = None
+    _back_data: Optional[Tuple[np.ndarray, ...]] = None
     # TODO: Automatic interpolation onto rectangular grid needs to be implemented (for position feedback HW)
+    # TODO: implement _back_position_data :)
     _position_data: Optional[Tuple[np.ndarray, ...]] = None
 
     @classmethod
@@ -280,6 +303,10 @@ class ScanData:
             _data_copy = tuple(a.copy() for a in self._data)
         else:
             _data_copy = None
+        if self._back_data:
+            _back_data_copy = tuple(a.copy() for a in self._back_data)
+        else:
+            _back_data_copy = None
         if self._position_data:
             _position_data_copy = tuple(a.copy() for a in self._position_data)
         else:
@@ -287,6 +314,7 @@ class ScanData:
         return replace(
             self,
             _data=_data_copy,
+            _back_data=_back_data_copy,
             _position_data=_position_data_copy,
             scanner_target_at_start=self.scanner_target_at_start.copy()
         )
@@ -319,6 +347,23 @@ class ScanData:
         if not all([val.shape == self.settings.resolution for val in data_dict.values()]):
             raise ValueError(f'Data shapes do not match resolution {self.settings.resolution}.')
         self._data = tuple(data for data in data_dict.values())
+
+    @property
+    def back_data(self) -> Optional[Dict[str, np.ndarray]]:
+        """ Dict of channel data arrays for backwards scan with channel names as keys. """
+        if self._back_data is None:
+            return None
+        return {ch: data for ch, data in zip(self.settings.channels, self._back_data)}
+
+    @back_data.setter
+    def back_data(self, data_dict: Dict[str, np.ndarray]) -> None:
+        channels = tuple(data_dict.keys())
+        if channels != self.settings.channels:
+            raise ValueError(f'Unknown channel names encountered in {channels}. '
+                             f'Valid channel names are {self.settings.channels}.')
+        if not all([val.shape == self.settings.back_resolution for val in data_dict.values()]):
+            raise ValueError(f'Data shapes do not match resolution {self.settings.back_resolution}.')
+        self._back_data = tuple(data for data in data_dict.values())
 
     @property
     def position_data(self) -> Optional[Dict[str, np.ndarray]]:
@@ -367,7 +412,16 @@ class ScanData:
             ch: np.full(shape=shape, fill_value=np.nan,
                         dtype=self.channel_dtypes[ch]) for ch in self.settings.channels
         }
-        return
+        # only initialize array for backscan data if it was configured
+        if self.settings.back_resolution > 0:
+            if len(shape) == 1:
+                back_shape = self.settings.back_resolution
+            else:
+                back_shape = (self.settings.back_resolution, shape[1])
+            self.back_data = {
+                ch: np.full(shape=back_shape, fill_value=np.nan,
+                            dtype=self.channel_dtypes[ch]) for ch in self.settings.channels
+            }
 
 
 class ScanningProbeInterface(Base):
