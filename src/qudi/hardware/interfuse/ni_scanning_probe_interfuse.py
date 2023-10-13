@@ -235,9 +235,13 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 constraints=self.constraints
             )
             self.log.debug(f'New ScanData created.')
+
+            if settings.scan_dimension == 2:
+                number_of_scan_lines = settings.resolution[1]
+            else:
+                number_of_scan_lines = settings.repetitions
             self.raw_data_container = RawDataContainer(settings.channels,
-                                                       settings.resolution[
-                                                           1] if settings.scan_dimension == 2 else 1,
+                                                       number_of_scan_lines,
                                                        settings.resolution[0],
                                                        self.__backwards_line_resolution)
             self.log.debug(f'New RawDataContainer created.')
@@ -598,8 +602,8 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
             horizontal_single_line = np.concatenate((horizontal,
                                                      horizontal_return_line))
-
-            voltage_dict = {self._ni_channel_mapping[axis]: horizontal_single_line}
+            horizontal_lines = np.tile(horizontal_single_line, scan_data.settings.repetitions)
+            voltage_dict = {self._ni_channel_mapping[axis]: horizontal_lines}
 
             return voltage_dict
 

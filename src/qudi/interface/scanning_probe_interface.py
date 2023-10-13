@@ -81,6 +81,7 @@ class ScanSettings:
     @param float frequency: Scan pixel frequency of the fast axis
     @param str[] position_feedback_axes: optional, names of axes for which to acquire position
                                          feedback during the scan.
+    @param int repetitions: scan a single axis multiple times, only applicable to 1D scans
     """
 
     channels: Tuple[str, ...]
@@ -89,6 +90,7 @@ class ScanSettings:
     resolution: Tuple[int, ...]
     frequency: float
     position_feedback_axes: Tuple[str, ...] = field(default_factory=tuple)
+    repetitions: int = 1
 
     def __post_init__(self) -> None:
         # Sanity checking
@@ -107,6 +109,8 @@ class ScanSettings:
             raise TypeError(
                 'The "position_feedback_axes" must be a subset of scan axes.'
             )
+        if self.repetitions > 1 and self.scan_dimension > 1:
+            raise ValueError("Repeated scans are only implemented for single-axis (1D) scans.")
 
     @classmethod
     def from_dict(cls, dict_repr):
@@ -347,13 +351,20 @@ class ScanData:
         else:
             raise TypeError('Optional parameter "timestamp" must be datetime.datetime object.')
 
+        # shape for data arrays
+        if self.settings.repetitions == 1:
+            # simple 1D or 2D scan
+            shape = self.settings.resolution
+        else:
+            # repeated 1D scan
+            shape = (self.settings.resolution[0], self.settings.repetitions)
         if self.settings.has_position_feedback:
-            self.position_data = {ax: np.full(self.settings.resolution, np.nan) for ax in
+            self.position_data = {ax: np.full(shape=shape, fill_value=np.nan) for ax in
                                   self.settings.position_feedback_axes}
         else:
             self._position_data = None
         self.data = {
-            ch: np.full(self.settings.resolution, np.nan,
+            ch: np.full(shape=shape, fill_value=np.nan,
                         dtype=self.channel_dtypes[ch]) for ch in self.settings.channels
         }
         return
