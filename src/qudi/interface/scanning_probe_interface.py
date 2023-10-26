@@ -137,6 +137,26 @@ class ScanSettings:
     def scan_dimension(self) -> int:
         return len(self.axes)
 
+    @property
+    def data_shape(self) -> Tuple[int, ...]:
+        """Shape of data arrays."""
+        if self.repetitions == 1:
+            # simple 1D or 2D scan
+            return self.resolution
+        else:
+            # repeated 1D scan
+            return self.resolution[0], self.repetitions
+
+    @property
+    def back_data_shape(self):
+        """Shape of data arrays for backwards scan."""
+        if not self.back_resolution > 0:
+            raise ValueError("Backwards scan is not configured.")
+        if self.repetitions == 1:
+            return self.back_resolution
+        else:
+            return self.back_resolution, self.repetitions
+
 
 @dataclass(frozen=True)
 class ScanConstraints:
@@ -344,8 +364,8 @@ class ScanData:
         if channels != self.settings.channels:
             raise ValueError(f'Unknown channel names encountered in {channels}. '
                              f'Valid channel names are {self.settings.channels}.')
-        if not all([val.shape == self.settings.resolution for val in data_dict.values()]):
-            raise ValueError(f'Data shapes do not match resolution {self.settings.resolution}.')
+        if not all([val.shape == self.settings.data_shape for val in data_dict.values()]):
+            raise ValueError(f'Data shapes do not match resolution {self.settings.data_shape}.')
         self._data = tuple(data for data in data_dict.values())
 
     @property
@@ -361,8 +381,8 @@ class ScanData:
         if channels != self.settings.channels:
             raise ValueError(f'Unknown channel names encountered in {channels}. '
                              f'Valid channel names are {self.settings.channels}.')
-        if not all([val.shape == self.settings.back_resolution for val in data_dict.values()]):
-            raise ValueError(f'Data shapes do not match resolution {self.settings.back_resolution}.')
+        if not all([val.shape == self.settings.back_data_shape for val in data_dict.values()]):
+            raise ValueError(f'Data shapes do not match resolution {self.settings.back_data_shape}.')
         self._back_data = tuple(data for data in data_dict.values())
 
     @property
@@ -381,7 +401,7 @@ class ScanData:
             raise ValueError(f'Unknown axis names encountered in {axes} or axes do not have position feedback. '
                              f'Valid axis names are {self.settings.position_feedback_axes}.')
         if not all([val.shape == self.settings.resolution for val in position_data_dict.values()]):
-            raise ValueError(f'Data shapes do not match resolution {self.settings.resolution}.')
+            raise ValueError(f'Data shapes do not match resolution {self.settings.data_shape}.')
         self._position_data = tuple(data for data in position_data_dict.values())
 
     def new_scan(self, timestamp=None):
@@ -396,28 +416,21 @@ class ScanData:
         else:
             raise TypeError('Optional parameter "timestamp" must be datetime.datetime object.')
 
-        # shape for data arrays
-        if self.settings.repetitions == 1:
-            # simple 1D or 2D scan
-            shape = self.settings.resolution
-        else:
-            # repeated 1D scan
-            shape = (self.settings.resolution[0], self.settings.repetitions)
         if self.settings.has_position_feedback:
-            self.position_data = {ax: np.full(shape=shape, fill_value=np.nan) for ax in
+            self.position_data = {ax: np.full(shape=self.settings.data_shape, fill_value=np.nan) for ax in
                                   self.settings.position_feedback_axes}
         else:
             self._position_data = None
         self.data = {
-            ch: np.full(shape=shape, fill_value=np.nan,
+            ch: np.full(shape=self.settings.data_shape, fill_value=np.nan,
                         dtype=self.channel_dtypes[ch]) for ch in self.settings.channels
         }
         # only initialize array for backscan data if it was configured
         if self.settings.back_resolution > 0:
-            if len(shape) == 1:
+            if len(self.settings.data_shape) == 1:
                 back_shape = self.settings.back_resolution
             else:
-                back_shape = (self.settings.back_resolution, shape[1])
+                back_shape = (self.settings.back_resolution, self.settings.data_shape[1])
             self.back_data = {
                 ch: np.full(shape=back_shape, fill_value=np.nan,
                             dtype=self.channel_dtypes[ch]) for ch in self.settings.channels
