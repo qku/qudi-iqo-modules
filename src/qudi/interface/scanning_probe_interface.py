@@ -153,7 +153,7 @@ class ScanSettings:
         if not self.back_resolution > 0:
             raise ValueError("Backwards scan is not configured.")
         if self.repetitions == 1:
-            return self.back_resolution
+            return (self.back_resolution,)
         else:
             return self.back_resolution, self.repetitions
 
@@ -427,12 +427,8 @@ class ScanData:
         }
         # only initialize array for backscan data if it was configured
         if self.settings.back_resolution > 0:
-            if len(self.settings.data_shape) == 1:
-                back_shape = self.settings.back_resolution
-            else:
-                back_shape = (self.settings.back_resolution, self.settings.data_shape[1])
             self.back_data = {
-                ch: np.full(shape=back_shape, fill_value=np.nan,
+                ch: np.full(shape=self.settings.back_data_shape, fill_value=np.nan,
                             dtype=self.channel_dtypes[ch]) for ch in self.settings.channels
             }
 
