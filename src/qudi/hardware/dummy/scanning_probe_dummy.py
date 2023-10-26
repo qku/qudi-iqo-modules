@@ -78,6 +78,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
         self._scan_settings: Optional[ScanSettings] = None
         self._current_position = dict()
         self._scan_image = None
+        self._back_scan_image = None
         self._scan_data = None
 
         # Randomized spot positions
@@ -116,13 +117,14 @@ class ScanningProbeDummy(ScanningProbeInterface):
 
         self._constraints = ScanConstraints(axis_objects=tuple(axes),
                                             channel_objects=tuple(channels),
-                                            backscan_configurable=False,
+                                            backscan_configurable=True,
                                             has_position_feedback=False,
                                             square_px_only=False)
 
         # Set default process values
         self._current_position = {ax.name: np.mean(ax.position.bounds) for ax in self.constraints.axes.values()}
         self._scan_image = None
+        self._back_scan_image = None
         self._scan_data = None
 
         # Create fixed maps of spots for each scan axes configuration
@@ -142,6 +144,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
         # free memory
         self._spots = dict()
         self._scan_image = None
+        self._back_scan_image = None
         try:
             self.__update_timer.stop()
         except:
@@ -319,16 +322,21 @@ class ScanningProbeDummy(ScanningProbeInterface):
                 y_values = np.linspace(self.scan_settings.range[1][0],
                                        self.scan_settings.range[1][1],
                                        self.scan_settings.resolution[1])
-                image_shape = self.scan_settings.resolution
             else:
                 y_values = np.linspace(self._current_position['y'],
                                        self._current_position['y'],
                                        self.scan_settings.repetitions)
-                image_shape = (self.scan_settings.resolution[0], self.scan_settings.repetitions)
             xy_grid = np.meshgrid(x_values, y_values, indexing='ij')
+            self._scan_image = np.random.uniform(0, 2e4, self.scan_settings.data_shape)
+
+            if self.scan_settings.back_resolution > 0:
+                x_back_values = np.linspace(self.scan_settings.range[0][1],
+                                            self.scan_settings.range[0][0],
+                                            self.scan_settings.back_resolution)
+                xy_back_grid = np.meshgrid(x_back_values, y_values, indexing='ij')
+                self._back_scan_image = np.random.uniform(0, 2e4, self.scan_settings.back_data_shape)
 
             include_dist = self._spot_size_dist[0] + 5 * self._spot_size_dist[1]
-            self._scan_image = np.random.uniform(0, 2e4, image_shape)
             for i in range(number_of_spots):
                 if positions[i][0] < self.scan_settings.range[0][0] - include_dist:
                     continue
@@ -349,7 +357,20 @@ class ScanningProbeDummy(ScanningProbeInterface):
                                           pos=positions[i],
                                           sigma=sigmas[i],
                                           theta=thetas[i])
-                self._scan_image += gauss
+                if gauss.shape[1] == 1:
+                    self._scan_image += gauss[:, 0]
+                else:
+                    self._scan_image += gauss
+                if self._back_scan_image is not None:
+                    back_gauss = self._gaussian_2d(xy_back_grid,
+                                                   amp=amplitudes[i],
+                                                   pos=positions[i],
+                                                   sigma=sigmas[i],
+                                                   theta=thetas[i])
+                    if back_gauss.shape[1] == 1:
+                        self._back_scan_image += back_gauss[:, 0]
+                    else:
+                        self._back_scan_image += back_gauss
 
             self._scan_data = ScanData.from_constraints(
                 settings=self.scan_settings,
@@ -372,6 +393,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
             self.log.debug('Scanning probe dummy "stop_scan" called.')
             if self.module_state() == 'locked':
                 self._scan_image = None
+                self._back_scan_image = None
                 self.module_state.unlock()
             else:
                 self.log.error('No scan in progress. Cannot stop scan.')
@@ -384,6 +406,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
         except FysomError:
             pass
         self._scan_image = None
+        self._back_scan_image = None
         self.log.warning('Scanner has been emergency stopped.')
 
     def get_scan_data(self) -> ScanData:
@@ -398,7 +421,10 @@ class ScanningProbeDummy(ScanningProbeInterface):
             if self.module_state() != 'idle':
                 elapsed = time.time() - self.__scan_start
                 line_time = self.scan_settings.resolution[0] / self.scan_settings.frequency
-                lines_to_scan = self._scan_image.shape[1]
+                if len(self._scan_image.shape) == 1:
+                    lines_to_scan = 1
+                else:
+                    lines_to_scan = self._scan_image.shape[1]
 
                 if lines_to_scan > 1:
                     acquired_lines = min(int(np.floor(elapsed / line_time)),
@@ -411,6 +437,10 @@ class ScanningProbeDummy(ScanningProbeInterface):
                             for ch in self._constraints.channels:
                                 tmp = self._scan_image[:, self.__last_line:acquired_lines]
                                 self._scan_data.data[ch][:, self.__last_line:acquired_lines] = tmp
+                                if self._back_scan_image is not None:
+                                    # always put scan and backscan in data simultaneously
+                                    tmp = self._back_scan_image[:, self.__last_line:acquired_lines]
+                                    self._scan_data.back_data[ch][:, self.__last_line:acquired_lines] = tmp
 
                             self.__last_line = acquired_lines - 1
                         if acquired_lines >= lines_to_scan:
@@ -428,8 +458,12 @@ class ScanningProbeDummy(ScanningProbeInterface):
                                 self.__last_line = 0
 
                             for ch in self._constraints.channels:
-                                tmp = self._scan_image[self.__last_line:acquired_lines, 0]
+                                tmp = self._scan_image[self.__last_line:acquired_lines]
                                 self._scan_data.data[ch][self.__last_line:acquired_lines] = tmp
+                                if self._back_scan_image is not None:
+                                    # FIXME: scan and backscan are filled simultaneously
+                                    tmp = self._back_scan_image[self.__last_line:acquired_lines]
+                                    self._scan_data.back_data[ch][self.__last_line:acquired_lines] = tmp
 
                             self.__last_line = acquired_lines - 1
                         if acquired_lines >= self.scan_settings.resolution[0]:
