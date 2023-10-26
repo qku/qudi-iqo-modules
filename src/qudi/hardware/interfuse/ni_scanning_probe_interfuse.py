@@ -56,10 +56,11 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 x: 'ao0'
                 y: 'ao1'
                 z: 'ao2'
+                laser: 'ao3'
                 APD1: 'PFI8'
                 APD2: 'PFI9'
                 AI0: 'ai0'
-            position_ranges: # in m
+            position_ranges: # in m, omit if you don't need a conversion and prefer to use bare voltages
                 x: [-100e-6, 100e-6]
                 y: [0, 200e-6]
                 z: [-100e-6, 100e-6]
@@ -67,10 +68,12 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 x: [1, 5000]
                 y: [1, 5000]
                 z: [1, 1000]
+                laser: [1, 5000]
             resolution_ranges:
                 x: [1, 10000]
                 y: [1, 10000]
                 z: [2, 1000]
+                laser: [1, 10000]
             input_channel_units:
                 APD1: 'c/s'
                 APD2: 'c/s'
@@ -123,10 +126,13 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
         # Sanity checks for ni_ao and ni finite sampling io
         # TODO check that config values within fsio range?
-        assert set(self._position_ranges) == set(self._frequency_ranges) == set(self._resolution_ranges), \
-            f'Channels in position ranges, frequency ranges and resolution ranges do not coincide'
+        assert set(self._frequency_ranges) == set(self._resolution_ranges), \
+            f'Channels in frequency ranges and resolution ranges do not coincide'
 
-        assert set(self._input_channel_units).union(self._position_ranges) == set(self._ni_channel_mapping), \
+        assert set(self._position_ranges).issubset(self._frequency_ranges), \
+            f'Channels in position ranges is not a subset of specified frequency and resolution ranges'
+
+        assert set(self._input_channel_units).union(self._frequency_ranges) == set(self._ni_channel_mapping), \
             f'Not all specified channels are mapped to an ni card physical channel'
 
         # TODO: Any case where ni_ao and ni_fio potentially don't have the same channels?
@@ -139,19 +145,27 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
         # Constraints
         axes = list()
-        for axis in self._position_ranges:
-            position_range = tuple(self._position_ranges[axis])
+        for axis in self._frequency_ranges:
+            position_range = self._position_ranges.get(axis)
             resolution_range = tuple(self._resolution_ranges[axis])
             frequency_range = tuple(self._frequency_ranges[axis])
             max_step = abs(position_range[1] - position_range[0])
 
-            position = ScalarConstraint(default=min(position_range), bounds=position_range)
+            if position_range is not None:
+                position_range = tuple(position_range)
+                unit = 'm'
+                position = ScalarConstraint(default=min(position_range), bounds=position_range)
+            else:
+                unit = 'V'
+                ni_channel = self._ni_channel_mapping[axis]
+                voltage_range = self._ni_finite_sampling_io().constraints.output_channel_limits[ni_channel]
+                position = ScalarConstraint(default=min(voltage_range), bounds=voltage_range)
             resolution = ScalarConstraint(default=min(resolution_range), bounds=resolution_range, enforce_int=True)
             frequency = ScalarConstraint(default=min(frequency_range), bounds=frequency_range)
             step = ScalarConstraint(default=0, bounds=(0, max_step))
 
             axes.append(ScannerAxis(name=axis,
-                                    unit='m',
+                                    unit=unit,
                                     position=position,
                                     step=step,
                                     resolution=resolution,
