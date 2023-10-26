@@ -319,12 +319,16 @@ class ScanningProbeDummy(ScanningProbeInterface):
                 y_values = np.linspace(self.scan_settings.range[1][0],
                                        self.scan_settings.range[1][1],
                                        self.scan_settings.resolution[1])
+                image_shape = self.scan_settings.resolution
             else:
-                y_values = np.linspace(self._current_position['y'], self._current_position['y'], 1)
+                y_values = np.linspace(self._current_position['y'],
+                                       self._current_position['y'],
+                                       self.scan_settings.repetitions)
+                image_shape = (self.scan_settings.resolution[0], self.scan_settings.repetitions)
             xy_grid = np.meshgrid(x_values, y_values, indexing='ij')
 
             include_dist = self._spot_size_dist[0] + 5 * self._spot_size_dist[1]
-            self._scan_image = np.random.uniform(0, 2e4, self.scan_settings.resolution)
+            self._scan_image = np.random.uniform(0, 2e4, image_shape)
             for i in range(number_of_spots):
                 if positions[i][0] < self.scan_settings.range[0][0] - include_dist:
                     continue
@@ -345,10 +349,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
                                           pos=positions[i],
                                           sigma=sigmas[i],
                                           theta=thetas[i])
-                if self.scan_settings.scan_dimension == 1:
-                    self._scan_image += gauss[:, 0]
-                else:
-                    self._scan_image += gauss
+                self._scan_image += gauss
 
             self._scan_data = ScanData.from_constraints(
                 settings=self.scan_settings,
@@ -397,10 +398,11 @@ class ScanningProbeDummy(ScanningProbeInterface):
             if self.module_state() != 'idle':
                 elapsed = time.time() - self.__scan_start
                 line_time = self.scan_settings.resolution[0] / self.scan_settings.frequency
+                lines_to_scan = self._scan_image.shape[1]
 
-                if self._scan_data.settings.scan_dimension == 2:
+                if lines_to_scan > 1:
                     acquired_lines = min(int(np.floor(elapsed / line_time)),
-                                         self.scan_settings.resolution[1])
+                                         lines_to_scan)
                     if acquired_lines > 0:
                         if self.__last_line < acquired_lines - 1:
                             if self.__last_line < 0:
@@ -411,7 +413,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
                                 self._scan_data.data[ch][:, self.__last_line:acquired_lines] = tmp
 
                             self.__last_line = acquired_lines - 1
-                        if acquired_lines >= self.scan_settings.resolution[1]:
+                        if acquired_lines >= lines_to_scan:
                             self.module_state.unlock()
                         elif self.thread() is QtCore.QThread.currentThread():
                             self.__start_timer()
@@ -426,7 +428,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
                                 self.__last_line = 0
 
                             for ch in self._constraints.channels:
-                                tmp = self._scan_image[self.__last_line:acquired_lines]
+                                tmp = self._scan_image[self.__last_line:acquired_lines, 0]
                                 self._scan_data.data[ch][self.__last_line:acquired_lines] = tmp
 
                             self.__last_line = acquired_lines - 1
