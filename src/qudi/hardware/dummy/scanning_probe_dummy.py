@@ -20,7 +20,7 @@ If not, see <https://www.gnu.org/licenses/>.
 """
 
 import time
-from typing import Optional
+from typing import Optional, Dict
 import numpy as np
 from PySide2 import QtCore
 from fysom import FysomError
@@ -61,15 +61,15 @@ class ScanningProbeDummy(ScanningProbeInterface):
     _threaded = True
 
     # config options
-    _position_ranges = ConfigOption(name='position_ranges', missing='error')
-    _frequency_ranges = ConfigOption(name='frequency_ranges', missing='error')
-    _resolution_ranges = ConfigOption(name='resolution_ranges', missing='error')
-    _position_accuracy = ConfigOption(name='position_accuracy', missing='error')
-    _spot_density = ConfigOption(name='spot_density', default=1e12/8)  # in 1/m²
-    _spot_depth_range = ConfigOption(name='spot_depth_range', default=(-500e-9, 500e-9))
-    _spot_size_dist = ConfigOption(name='spot_size_dist', default=(100e-9, 15e-9))
-    _spot_amplitude_dist = ConfigOption(name='spot_amplitude_dist', default=(2e5, 4e4))
-    _require_square_pixels = ConfigOption(name='require_square_pixels', default=False)
+    _position_ranges: Dict[str, list[float]] = ConfigOption(name='position_ranges', missing='error')
+    _frequency_ranges: Dict[str, list[float]] = ConfigOption(name='frequency_ranges', missing='error')
+    _resolution_ranges: Dict[str, list[float]] = ConfigOption(name='resolution_ranges', missing='error')
+    _position_accuracy: Dict[str, float] = ConfigOption(name='position_accuracy', missing='error')
+    _spot_density: float = ConfigOption(name='spot_density', default=1e12/8)  # in 1/m²
+    _spot_depth_range: list[float] = ConfigOption(name='spot_depth_range', default=(-500e-9, 500e-9))
+    _spot_size_dist: list[float] = ConfigOption(name='spot_size_dist', default=(100e-9, 15e-9))
+    _spot_amplitude_dist: list[float] = ConfigOption(name='spot_amplitude_dist', default=(2e5, 4e4))
+    _require_square_pixels: bool = ConfigOption(name='require_square_pixels', default=False)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -101,7 +101,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
             resolution_range = tuple(self._resolution_ranges[axis])
             frequency_range = tuple(self._frequency_ranges[axis])
 
-            position = ScalarConstraint(default=min(ax_range), bounds=ax_range)
+            position = ScalarConstraint(default=min(ax_range), bounds=tuple(ax_range))
             resolution = ScalarConstraint(default=min(resolution_range), bounds=resolution_range, enforce_int=True)
             frequency = ScalarConstraint(default=min(frequency_range), bounds=frequency_range)
             step = ScalarConstraint(default=0, bounds=(0, dist))
