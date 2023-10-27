@@ -40,7 +40,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
     scanning_probe_dummy:
         module.Class: 'scanning_probe_dummy.ScanningProbeDummy'
         options:
-            spot_density: 4e6           # in 1/m², optional
+            spot_density: 4e6           # in 1/<unit>², optional
             position_ranges:
                 x: [0, 200e-6]
                 y: [0, 200e-6]
@@ -57,6 +57,10 @@ class ScanningProbeDummy(ScanningProbeInterface):
                 x: 10e-9
                 y: 10e-9
                 z: 50e-9
+            units:
+                x: m
+                y: m
+                z: m
     """
     _threaded = True
 
@@ -65,7 +69,8 @@ class ScanningProbeDummy(ScanningProbeInterface):
     _frequency_ranges: Dict[str, list[float]] = ConfigOption(name='frequency_ranges', missing='error')
     _resolution_ranges: Dict[str, list[float]] = ConfigOption(name='resolution_ranges', missing='error')
     _position_accuracy: Dict[str, float] = ConfigOption(name='position_accuracy', missing='error')
-    _spot_density: float = ConfigOption(name='spot_density', default=1e12/8)  # in 1/m²
+    _units: Dict[str, str] = ConfigOption(name='units', default=dict())
+    _spot_density: float = ConfigOption(name='spot_density', default=1e12/8)  # in 1/<unit>²
     _spot_depth_range: list[float] = ConfigOption(name='spot_depth_range', default=(-500e-9, 500e-9))
     _spot_size_dist: list[float] = ConfigOption(name='spot_size_dist', default=(100e-9, 15e-9))
     _spot_amplitude_dist: list[float] = ConfigOption(name='spot_amplitude_dist', default=(2e5, 4e4))
@@ -101,13 +106,14 @@ class ScanningProbeDummy(ScanningProbeInterface):
             dist = max(ax_range) - min(ax_range)
             resolution_range = tuple(self._resolution_ranges[axis])
             frequency_range = tuple(self._frequency_ranges[axis])
+            unit = self._units.get(axis, 'm')
 
             position = ScalarConstraint(default=min(ax_range), bounds=tuple(ax_range))
             resolution = ScalarConstraint(default=min(resolution_range), bounds=resolution_range, enforce_int=True)
             frequency = ScalarConstraint(default=min(frequency_range), bounds=frequency_range)
             step = ScalarConstraint(default=0, bounds=(0, dist))
             axes.append(ScannerAxis(name=axis,
-                                    unit='m',
+                                    unit=unit,
                                     position=position,
                                     step=step,
                                     resolution=resolution,
