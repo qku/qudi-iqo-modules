@@ -38,7 +38,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
     Example config for copy-paste:
 
     scanning_probe_dummy:
-        module.Class: 'scanning_probe_dummy.ScanningProbeDummy'
+        module.Class: 'dummy.scanning_probe_dummy.ScanningProbeDummy'
         options:
             spot_density: 4e6           # in 1/<unit>², optional
             position_ranges:
@@ -237,10 +237,10 @@ class ScanningProbeDummy(ScanningProbeInterface):
         with self._thread_lock:
             # self.log.debug('Scanning probe dummy "move_absolute" called.')
             if self.module_state() != 'idle':
-                self.log.error('Scanning in progress. Unable to move to position.')
+                raise RuntimeError('Scanning in progress. Unable to move to position.')
             elif not set(position).issubset(self._position_ranges):
-                self.log.error('Invalid axes encountered in position dict. Valid axes are: {0}'
-                               ''.format(set(self._position_ranges)))
+                raise ValueError('Invalid axes encountered in position dict. Valid axes are: {0}'
+                                 ''.format(set(self._position_ranges)))
             else:
                 move_distance = {ax: np.abs(pos - self._current_position[ax]) for ax, pos in
                                  position.items()}
@@ -263,10 +263,10 @@ class ScanningProbeDummy(ScanningProbeInterface):
         with self._thread_lock:
             self.log.debug('Scanning probe dummy "move_relative" called.')
             if self.module_state() != 'idle':
-                self.log.error('Scanning in progress. Unable to move relative.')
+                raise RuntimeError('Scanning in progress. Unable to move relative.')
             elif not set(distance).issubset(self._position_ranges):
-                self.log.error('Invalid axes encountered in distance dict. Valid axes are: {0}'
-                               ''.format(set(self._position_ranges)))
+                raise ValueError('Invalid axes encountered in distance dict. Valid axes are: {0}'
+                                 ''.format(set(self._position_ranges)))
             else:
                 new_pos = {ax: self._current_position[ax] + dist for ax, dist in distance.items()}
                 if velocity is None:
@@ -305,7 +305,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
         with self._thread_lock:
             self.log.debug('Scanning probe dummy "start_scan" called.')
             if self.module_state() != 'idle':
-                self.log.error('Can not start scan. Scan already in progress.')
+                raise RuntimeError('Cannot start scan. Scan already in progress.')
             if not self.scan_settings:
                 raise RuntimeError('No scan settings configured. Cannot start scan.')
             self.module_state.lock()
@@ -402,7 +402,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
                 self._back_scan_image = None
                 self.module_state.unlock()
             else:
-                self.log.error('No scan in progress. Cannot stop scan.')
+                raise RuntimeError('No scan in progress. Cannot stop scan.')
 
     def emergency_stop(self):
         """
