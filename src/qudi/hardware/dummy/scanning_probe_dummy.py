@@ -440,7 +440,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
                             if self.__last_line < 0:
                                 self.__last_line = 0
 
-                            for ch in self._constraints.channels:
+                            for ch in self.scan_settings.channels:
                                 tmp = self._scan_image[:, self.__last_line:acquired_lines]
                                 self._scan_data.data[ch][:, self.__last_line:acquired_lines] = tmp
                                 if self._back_scan_image is not None:
@@ -463,7 +463,7 @@ class ScanningProbeDummy(ScanningProbeInterface):
                             if self.__last_line < 0:
                                 self.__last_line = 0
 
-                            for ch in self._constraints.channels:
+                            for ch in self.scan_settings.channels:
                                 tmp = self._scan_image[self.__last_line:acquired_lines]
                                 self._scan_data.data[ch][self.__last_line:acquired_lines] = tmp
                                 if self._back_scan_image is not None:
