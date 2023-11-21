@@ -247,7 +247,6 @@ class ScanConstraints:
             raise TypeError(f'Backscan resolution type check failed for fast axis "{fast_axis_name}".') from e
 
     def clip(self, settings: ScanSettings) -> ScanSettings:
-        self.check_axes(settings)
         clipped_range = []
         clipped_resolution = []
         for axis, _range, resolution in zip(settings.axes, settings.range, settings.resolution):
@@ -259,13 +258,19 @@ class ScanConstraints:
         for axis in settings.axes:
             clipped_frequency = self.axes[axis].frequency.clip(clipped_frequency)
 
+        clipped_back_resolution = settings.back_resolution
+        if clipped_back_resolution > 0:
+            clipped_back_resolution = self.axis_objects[0].resolution.clip(clipped_back_resolution)
+
         clipped_settings = ScanSettings(
             channels=settings.channels,
             axes=settings.axes,
             range=tuple(clipped_range),
             resolution=tuple(clipped_resolution),
             frequency=clipped_frequency,
-            position_feedback_axes=settings.position_feedback_axes
+            position_feedback_axes=settings.position_feedback_axes,
+            repetitions=settings.repetitions,
+            back_resolution=clipped_back_resolution,
         )
         return clipped_settings
 
