@@ -23,6 +23,7 @@ If not, see <https://www.gnu.org/licenses/>.
 
 import numpy as np
 import time
+from typing import Optional, Dict
 
 from PySide2 import QtCore
 from PySide2.QtGui import QGuiApplication
@@ -83,14 +84,14 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
     _ni_finite_sampling_io = Connector(name='scan_hardware', interface='FiniteSamplingIOInterface')
     _ni_ao = Connector(name='analog_output', interface='ProcessSetpointInterface')
 
-    _ni_channel_mapping = ConfigOption(name='ni_channel_mapping', missing='error')
-    _position_ranges = ConfigOption(name='position_ranges', missing='error')
-    _frequency_ranges = ConfigOption(name='frequency_ranges', missing='error')
-    _resolution_ranges = ConfigOption(name='resolution_ranges', missing='error')
-    _input_channel_units = ConfigOption(name='input_channel_units', missing='error')
+    _ni_channel_mapping: Dict[str, str] = ConfigOption(name='ni_channel_mapping', missing='error')
+    _position_ranges: Dict[str, list[float]] = ConfigOption(name='position_ranges', missing='error')
+    _frequency_ranges: Dict[str, list[float]] = ConfigOption(name='frequency_ranges', missing='error')
+    _resolution_ranges: Dict[str, list[float]] = ConfigOption(name='resolution_ranges', missing='error')
+    _input_channel_units: Dict[str, str] = ConfigOption(name='input_channel_units', missing='error')
 
-    __backwards_line_resolution = ConfigOption(name='backwards_line_resolution', default=50)
-    __max_move_velocity = ConfigOption(name='maximum_move_velocity', default=400e-6)
+    __backwards_line_resolution: int = ConfigOption(name='backwards_line_resolution', default=50)
+    __max_move_velocity: float = ConfigOption(name='maximum_move_velocity', default=400e-6)
 
     _threaded = True  # Interfuse is by default not threaded.
 
@@ -104,17 +105,17 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         self._current_scan_axes = tuple()
         self._current_scan_resolution = tuple()
 
-        self._scan_data = None
-        self.raw_data_container = None
+        self._scan_data: Optional[ScanData] = None
+        self.raw_data_container: Optional[RawDataContainer] = None
 
-        self._constraints = None
+        self._constraints: Optional[ScanConstraints] = None
 
         self._target_pos = dict()
         self._stored_target_pos = dict()
         self._start_scan_after_cursor = False
         self._abort_cursor_move = False
 
-        self.__ni_ao_write_timer = None
+        self.__ni_ao_write_timer: Optional[QtCore.QTimer] = None
         self._min_step_interval = 1e-3
         self._scanner_distance_atol = 1e-9
 
