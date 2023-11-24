@@ -31,10 +31,9 @@ from qudi.interface.scanning_probe_interface import ScanningProbeInterface, Scan
     ScannerAxis, ScannerChannel, ScanData
 from qudi.core.configoption import ConfigOption
 from qudi.core.connector import Connector
-from qudi.util.mutex import RecursiveMutex, Mutex
+from qudi.util.mutex import Mutex
 from qudi.util.enums import SamplingOutputMode
 from qudi.util.helpers import in_range
-
 
 
 class NiScanningProbeInterfuse(ScanningProbeInterface):
@@ -123,7 +122,6 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         self._thread_lock_data = Mutex()
 
     def on_activate(self):
-
         # Sanity checks for ni_ao and ni finite sampling io
         # TODO check that config values within fsio range?
         assert set(self._position_ranges) == set(self._frequency_ranges) == set(self._resolution_ranges), \
@@ -161,7 +159,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                                             backscan_configurable=False,  # TODO incorporate in scanning_probe toolchain
                                             has_position_feedback=False,  # TODO incorporate in scanning_probe toolchain
                                             square_px_only=False)  # TODO incorporate in scanning_probe toolchain
-#
+
         self._target_pos = self.get_position()  # get voltages/pos from ni_ao
         self._toggle_ao_setpoint_channels(False)  # And free ao resources after that
         self._t_last_move = time.perf_counter()
@@ -265,7 +263,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                                                                    1] if self._scan_data.scan_dimension == 2 else 1,
                                                                resolution[0],
                                                                self.__backwards_line_resolution)
-                    # self.log.debug(f"New scanData created: {self._scan_data.data}")
+                    self.log.debug(f"New scanData created: {self._scan_data.data}")
 
                 except:
                     self.log.exception("")
@@ -333,7 +331,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 QGuiApplication.processEvents()
                 time.sleep(self._min_step_interval)
 
-            #self.log.debug(f"Move_abs finished after waiting {1e3*(time.perf_counter()-t_start)} ms ")
+            self.log.debug(f"Move_abs finished after waiting {1e3*(time.perf_counter()-t_start)} ms ")
         except:
             self.log.exception("")
 
@@ -380,7 +378,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
     def start_scan(self):
         try:
 
-            #self.log.debug(f"Start scan in thread {self.thread()}, QT.QThread {QtCore.QThread.currentThread()}... ")
+            self.log.debug(f"Start scan in thread {self.thread()}, QT.QThread {QtCore.QThread.currentThread()}... ")
 
             if self.thread() is not QtCore.QThread.currentThread():
                 QtCore.QMetaObject.invokeMethod(self, '_start_scan',
@@ -410,7 +408,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
             with self._thread_lock_data:
                 self._scan_data.new_scan()
-                #self.log.debug(f"New scan data: {self._scan_data.data}, position {self._scan_data._position_data}")
+                self.log.debug(f"New scan data: {self._scan_data.data}, position {self._scan_data._position_data}")
                 self._stored_target_pos = self.get_target().copy()
                 self._scan_data.scanner_target_at_start = self._stored_target_pos
 
@@ -426,14 +424,13 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             self.module_state.unlock()
             self.log.exception("Starting scan failed: ")
 
-
     def stop_scan(self):
         """
         @return bool: Failure indicator (fail=True)
         # todo: return values as error codes are deprecated
         """
 
-        #self.log.debug("Stopping scan")
+        self.log.debug("Stopping scan")
         if self.thread() is not QtCore.QThread.currentThread():
             QtCore.QMetaObject.invokeMethod(self, '_stop_scan',
                                             QtCore.Qt.BlockingQueuedConnection)
@@ -445,18 +442,18 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
     @QtCore.Slot()
     def _stop_scan(self):
 
-        # self.log.debug("Stopping scan...")
+        self.log.debug("Stopping scan...")
         self._start_scan_after_cursor = False  # Ensure Scan HW is not started after movement
         if self._ao_setpoint_channels_active:
             self._abort_cursor_movement()
-            # self.log.debug("Move aborted")
+            self.log.debug("Move aborted")
 
         if self._ni_finite_sampling_io().is_running:
             self._ni_finite_sampling_io().stop_buffered_frame()
-            # self.log.debug("Frame stopped")
+            self.log.debug("Frame stopped")
 
         self.module_state.unlock()
-        # self.log.debug("Module unlocked")
+        self.log.debug("Module unlocked")
 
         self.move_absolute(self._stored_target_pos)
         self._stored_target_pos = dict()
@@ -522,7 +519,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
     def _fetch_data_chunk(self):
         try:
-            # self.log.debug(f'fetch chunk: {self._ni_finite_sampling_io().samples_in_buffer}, {self.is_scan_running}')
+            self.log.debug(f'fetch chunk: {self._ni_finite_sampling_io().samples_in_buffer}, {self.is_scan_running}')
             # chunk_size = self._scan_data.scan_resolution[0] + self.__backwards_line_resolution
             chunk_size = 10  # TODO Hardcode or go line by line as commented out above?
             # Request a minimum of chunk_size samples per loop
@@ -735,7 +732,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                         self.__t_last_follow = time.perf_counter()
 
                     delta_t = t_start - self.__t_last_follow
-                    #self.log.debug(f"Write loop duration: {1e3*(time.perf_counter()-self.__t_last_follow)} ms")
+                    self.log.debug(f"Write loop duration: {1e3*(time.perf_counter()-self.__t_last_follow)} ms")
                     self.__t_last_follow = t_start
 
                     # Calculate new position to go to
@@ -752,15 +749,15 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                                    for ax, pos in new_pos.items()}
 
                     self._ni_ao().setpoints = new_voltage
-                    #self.log.debug(f'Cursor_write_loop move to {new_pos}, Dist= {distance_to_target} '
-                    #               f'took {1e3*(time.perf_counter()-t_start)} ms.')
+                    self.log.debug(f'Cursor_write_loop move to {new_pos}, Dist= {distance_to_target} '
+                                   f'took {1e3*(time.perf_counter()-t_start)} ms.')
 
                     # Start single-shot timer to call this follow loop again after some wait time
                     t_overhead = time.perf_counter() - t_start
                     self.__ni_ao_write_timer.start(int(round(1000 * max(0, self._min_step_interval - t_overhead))))
 
             if stop_loop:
-                #self.log.debug(f'Cursor_write_loop stopping at {current_pos_vec}, dist= {distance_to_target}')
+                self.log.debug(f'Cursor_write_loop stopping at {current_pos_vec}, dist= {distance_to_target}')
                 self._abort_cursor_movement()
 
                 if self._start_scan_after_cursor:
@@ -770,7 +767,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
     def _start_hw_timed_scan(self):
 
-        #self.log.debug("Starting hw timed scan")
+        self.log.debug("Starting hw timed scan")
         try:
             self._ni_finite_sampling_io().start_buffered_frame()
             self.sigNextDataChunk.emit()
@@ -785,7 +782,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         Abort the movement and release ni_ao resources.
         """
 
-        #self.log.debug(f"Aborting move.")
+        self.log.debug(f"Aborting move.")
         self._target_pos = self.get_position()
 
         with self._thread_lock_cursor:
@@ -794,12 +791,12 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             self.__t_last_follow = None
             self._toggle_ao_setpoint_channels(False)
 
-            #self.log.debug("hw turned off")
+            self.log.debug("hw turned off")
 
     def _move_to_and_start_scan(self, position):
         self._prepare_movement(position)
         self._start_scan_after_cursor = True
-        #self.log.debug("Starting timer to move to scan position")
+        self.log.debug("Starting timer to move to scan position")
         self.__start_ao_write_timer()
 
     def _prepare_movement(self, position, velocity=None):
@@ -812,7 +809,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         #  QObject::killTimer: Timers cannot be stopped from another thread
         #  QObject::startTimer: Timers cannot be started from another thread
 
-        #self.log.debug("Preparing movement")
+        self.log.debug("Preparing movement")
 
         with self._thread_lock_cursor:
             self._abort_cursor_move = False
@@ -830,7 +827,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 # TODO Adapt interface to use "in_range"?
                 self._target_pos[axis] = position[axis]
 
-            #self.log.debug(f"New target pos: {self._target_pos}")
+            self.log.debug(f"New target pos: {self._target_pos}")
 
             # TODO Add max velocity as a hardware constraint/ Calculate from scan_freq etc?
             if velocity is None:
@@ -842,7 +839,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
             self._follow_velocity = velocity
 
-        #self.log.debug("Movement prepared")
+        self.log.debug("Movement prepared")
         # TODO Keep other axis constant?
 
     def __init_ao_timer(self):
@@ -853,10 +850,10 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         self.__ni_ao_write_timer.setInterval(1e3*self._min_step_interval)  # (ms), dynamically calculated during write loop
 
     def __start_ao_write_timer(self):
-        #self.log.debug(f"ao start write timer in thread {self.thread()}, QT.QThread {QtCore.QThread.currentThread()} ")
+        self.log.debug(f"ao start write timer in thread {self.thread()}, QT.QThread {QtCore.QThread.currentThread()} ")
         try:
             if not self.is_move_running:
-                #self.log.debug("Starting AO write timer...")
+                self.log.debug("Starting AO write timer...")
                 if self.thread() is not QtCore.QThread.currentThread():
                     QtCore.QMetaObject.invokeMethod(self.__ni_ao_write_timer,
                                                     'start',
@@ -865,7 +862,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                     self.__ni_ao_write_timer.start()
             else:
                 pass
-                #self.log.debug("Dropping timer start, already running")
+                self.log.debug("Dropping timer start, already running")
 
         except:
             self.log.exception("")
