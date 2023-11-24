@@ -23,7 +23,7 @@ If not, see <https://www.gnu.org/licenses/>.
 
 import numpy as np
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, Union
 
 from PySide2 import QtCore
 from PySide2.QtGui import QGuiApplication
@@ -106,6 +106,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         self.raw_data_container: Optional[RawDataContainer] = None
 
         self._constraints: Optional[ScanConstraints] = None
+        self._voltage_ranges: Dict[str, list[float]] = dict()
 
         self._target_pos = dict()
         self._stored_target_pos = dict()
@@ -154,6 +155,13 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                     resolution_range=resolution_range,
                     frequency_range=frequency_range
                 ))
+
+                voltage_range = ni_io.constraints.output_channel_limits[ni_channel]
+                if voltage_range != tuple(ni_ao.constraints.channel_limits[ni_channel]):
+                    self.log.warning(f'NI analog output and finite sampling IO channel limits are not the same '
+                                     f'for NI channel {ni_channel}. Adapt the configuration file.')
+                # store for conversion between position and voltage
+                self._voltage_ranges[name] = voltage_range
 
             else:
                 raise ValueError(f'NI channel {ni_channel} is not configured on the NI finite sampling IO.')
@@ -226,9 +234,9 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         resolution = scan_settings.get('resolution', self._current_scan_resolution)
         frequency = float(scan_settings.get('frequency', self._current_scan_frequency))
 
-        if not set(axes).issubset(self._position_ranges):
+        if not set(axes).issubset(self._constraints.axes):
             self.log.error('Unknown axes names encountered. Valid axes are: {0}'
-                           ''.format(set(self._position_ranges)))
+                           ''.format(set(self._constraints.axes)))
             return True, self.scan_settings
 
         if len(axes) != len(ranges) or len(axes) != len(resolution):
@@ -376,8 +384,15 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             if not self._ao_setpoint_channels_active:
                 self._toggle_ao_setpoint_channels(True)
 
-            pos = self._voltage_dict_to_position_dict(self._ni_ao().setpoints)
-            return pos
+            ni_ao: ProcessSetpointInterface = self._ni_ao()
+            # reverse NI channel mapping
+            axis_names = {val.lower(): key for key, val in self._ni_channel_mapping.items()}
+            positions = {}
+            for ni_channel, voltage in ni_ao.setpoints.items():
+                axis = axis_names.get(ni_channel)
+                if axis is not None:  # some channels might not be configured for the scanner
+                    positions[axis] = self._voltage_to_position(axis, voltage)
+            return positions
 
     def start_scan(self):
         try:
@@ -554,32 +569,19 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             self.log.exception("")
             self.stop_scan()
 
-    def _position_to_voltage(self, axis, positions):
-        """
-        @param str axis: scanner axis name for which the position is to be converted to voltages
-        @param np.array/single value position(s): Position (value(s)) to convert to voltage(s) of corresponding
-        ni_channel derived from axis string
+    def _position_to_voltage(self, axis: str, position: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        """Convert a calibrated axis position to a voltage."""
+        if self._constraints.axes[axis].unit == 'V':
+            return position
+        else:
+            return np.interp(position, self._position_ranges[axis], self._voltage_ranges[axis])
 
-        @return np.array/single value: Position(s) converted to voltage(s) (value(s)) [single value & 1D np.array depending on input]
-                      for corresponding ni_channel (keys)
-        """
-
-        ni_channel = self._ni_channel_mapping[axis]
-        voltage_range = self._ni_finite_sampling_io().constraints.output_channel_limits[ni_channel]
-        position_range = self.get_constraints().axes[axis].value_range
-
-        slope = np.diff(voltage_range) / np.diff(position_range)
-        intercept = voltage_range[1] - position_range[1] * slope
-
-        converted = np.clip(positions * slope + intercept, min(voltage_range), max(voltage_range))
-
-        try:
-            # In case of single value, use just this value
-            voltage_data = converted.item()
-        except ValueError:
-            voltage_data = converted
-
-        return voltage_data
+    def _voltage_to_position(self, axis: str, voltage: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        """Convert a voltage to a calibrated axis position."""
+        if self._constraints.axes[axis].unit == 'V':
+            return voltage
+        else:
+            return np.interp(voltage, self._voltage_ranges[axis], self._position_ranges[axis])
 
     def _pos_dict_to_vec(self, position):
 
@@ -593,42 +595,6 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
 
         axes = sorted(self.get_constraints().axes.keys())
         return {axes[idx]: pos for idx, pos in enumerate(position_vec)}
-
-    def _voltage_dict_to_position_dict(self, voltages):
-        """
-        @param dict voltages: Voltages (value(s)) to convert to position(s) of corresponding scanner axis (keys)
-
-        @return dict: Voltage(s) converted to position(s) (value(s)) [single value & 1D np.array depending on input] for
-                      for corresponding axis (keys)
-        """
-
-        reverse_routing = {val.lower(): key for key, val in self._ni_channel_mapping.items()}
-
-        # TODO check voltages given correctly checking?
-        positions_data = dict()
-        for ni_channel in voltages:
-            try:
-                axis = reverse_routing[ni_channel]
-                voltage_range = self._ni_finite_sampling_io().constraints.output_channel_limits[ni_channel]
-                position_range = self.get_constraints().axes[axis].value_range
-
-                slope = np.diff(position_range) / np.diff(voltage_range)
-                intercept = position_range[1] - voltage_range[1] * slope
-
-                converted = voltages[ni_channel] * slope + intercept
-                # round position values to 100 pm. Avoids float precision errors
-                converted = np.around(converted, 10)
-            except KeyError:
-                # if one of the AO channels is not used for confocal
-                continue
-
-            try:
-                # In case of single value, use just this value
-                positions_data[axis] = converted.item()
-            except ValueError:
-                positions_data[axis] = converted
-
-        return positions_data
 
     def _initialize_ni_scan_arrays(self, scan_data):
         """
