@@ -72,10 +72,6 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 x: [1, 10000]
                 y: [1, 10000]
                 z: [2, 1000]
-            input_channel_units:
-                APD1: 'c/s'
-                APD2: 'c/s'
-                AI0: 'V'
             backwards_line_resolution: 50 # optional
             move_velocity: 400e-6 #m/s; This speed is used for scanner movements and avoids jumps from position to position.
     """
@@ -90,7 +86,6 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
     _position_ranges: Dict[str, list[float]] = ConfigOption(name='position_ranges', missing='error')
     _frequency_ranges: Dict[str, list[float]] = ConfigOption(name='frequency_ranges', missing='error')
     _resolution_ranges: Dict[str, list[float]] = ConfigOption(name='resolution_ranges', missing='error')
-    _input_channel_units: Dict[str, str] = ConfigOption(name='input_channel_units', missing='error')
 
     __backwards_line_resolution: int = ConfigOption(name='backwards_line_resolution', default=50)
     __max_move_velocity: float = ConfigOption(name='maximum_move_velocity', default=400e-6)
@@ -281,7 +276,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             try:
                 self._ni_finite_sampling_io().set_sample_rate(frequency)
                 self._ni_finite_sampling_io().set_active_channels(
-                    input_channels=(self._ni_channel_mapping[in_ch] for in_ch in self._input_channel_units),
+                    input_channels=(self._ni_channel_mapping[in_ch] for in_ch in self._constraints.channels),
                     output_channels=(self._ni_channel_mapping[ax] for ax in axes)
                     # TODO Use all axes and keep the unused constant? basically just constants in ni scan dict.
                 )
