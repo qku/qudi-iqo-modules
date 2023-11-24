@@ -30,6 +30,8 @@ from PySide2.QtGui import QGuiApplication
 
 from qudi.interface.scanning_probe_interface import ScanningProbeInterface, ScanConstraints, \
     ScannerAxis, ScannerChannel, ScanData
+from qudi.interface.finite_sampling_io_interface import FiniteSamplingIOInterface
+from qudi.interface.process_control_interface import ProcessSetpointInterface
 from qudi.core.configoption import ConfigOption
 from qudi.core.connector import Connector
 from qudi.util.mutex import Mutex
@@ -123,37 +125,43 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         self._thread_lock_data = Mutex()
 
     def on_activate(self):
-        # Sanity checks for ni_ao and ni finite sampling io
-        # TODO check that config values within fsio range?
-        assert set(self._position_ranges) == set(self._frequency_ranges) == set(self._resolution_ranges), \
-            f'Channels in position ranges, frequency ranges and resolution ranges do not coincide'
+        ni_io: FiniteSamplingIOInterface = self._ni_finite_sampling_io()
+        ni_ao: ProcessSetpointInterface = self._ni_ao()
 
-        assert set(self._input_channel_units).union(self._position_ranges) == set(self._ni_channel_mapping), \
-            f'Not all specified channels are mapped to an ni card physical channel'
+        # check the configuration and create scanner constraints
+        axes, channels = [], []
+        for name, ni_channel in self._ni_channel_mapping.items():
+            ni_channel = ni_channel.lower()
+            if ni_channel in ni_io.constraints.input_channel_names:
+                # input channels are referred to as scanner "channels"
+                channels.append(ScannerChannel(
+                    name=name,
+                    unit=ni_io.constraints.input_channel_units[ni_channel],
+                    dtype=np.float64
+                ))
 
-        # TODO: Any case where ni_ao and ni_fio potentially don't have the same channels?
-        specified_ni_finite_io_channels_set = set(self._ni_finite_sampling_io().constraints.input_channel_units).union(
-            set(self._ni_finite_sampling_io().constraints.output_channel_units))
-        mapped_channels = set([val.lower() for val in self._ni_channel_mapping.values()])
+            elif ni_channel in ni_io.constraints.output_channel_names:
+                # output channels are referred to as scanner "axes"
+                if ni_channel not in ni_ao.constraints.setpoint_channels:
+                    raise ValueError(f'NI channel {ni_channel} is not configured on the NI analog output.')
+                try:
+                    position_range = self._position_ranges[name]
+                    resolution_range = self._resolution_ranges[name]
+                    frequency_range = self._frequency_ranges[name]
+                except KeyError:
+                    raise ValueError(f'No position, resolution or frequency limits configured for axis "{name}".')
+                unit = 'm'
+                axes.append(ScannerAxis(
+                    name=name,
+                    unit=unit,
+                    value_range=position_range,
+                    step_range=(0, abs(np.diff(position_range))),
+                    resolution_range=resolution_range,
+                    frequency_range=frequency_range
+                ))
 
-        assert set(mapped_channels).issubset(specified_ni_finite_io_channels_set), \
-            f'Channel mapping does not coincide with ni finite sampling io.'
-
-        # Constraints
-        axes = list()
-        for axis in self._position_ranges:
-            axes.append(ScannerAxis(name=axis,
-                                    unit='m',
-                                    value_range=self._position_ranges[axis],
-                                    step_range=(0, abs(np.diff(self._position_ranges[axis]))),
-                                    resolution_range=self._resolution_ranges[axis],
-                                    frequency_range=self._frequency_ranges[axis])
-                        )
-        channels = list()
-        for channel, unit in self._input_channel_units.items():
-            channels.append(ScannerChannel(name=channel,
-                                           unit=unit,
-                                           dtype=np.float64))
+            else:
+                raise ValueError(f'NI channel {ni_channel} is not configured on the NI finite sampling IO.')
 
         self._constraints = ScanConstraints(axes=axes,
                                             channels=channels,
