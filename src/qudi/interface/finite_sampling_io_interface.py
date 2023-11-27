@@ -34,7 +34,7 @@ class FiniteSamplingIOInterface(Base):
 
     @property
     @abstractmethod
-    def constraints(self):
+    def constraints(self) -> 'FiniteSamplingIOConstraints':
         """
         ToDo: Document
         """
