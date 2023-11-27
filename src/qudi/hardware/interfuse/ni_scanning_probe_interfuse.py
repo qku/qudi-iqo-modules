@@ -3,7 +3,6 @@
 """
 Interfuse of Ni Finite Sampling IO and NI AO HardwareFiles to make a confocal scanner.
 
-
 Copyright (c) 2021, the qudi developers. See the AUTHORS.md file at the top-level directory of this
 distribution and on <https://github.com/Ulm-IQO/qudi-iqo-modules/>
 
@@ -41,9 +40,19 @@ from qudi.util.helpers import in_range
 
 class NiScanningProbeInterfuse(ScanningProbeInterface):
     """
-    This interfuse combines modules of a National Instrument device to make up a scanning probe hardware.
-    One module for software timed analog output (NIXSeriesAnalogOutput) to position e.g. a scanner to a specific
+    This interfuse combines modules of a National Instrument device to make up a scanning probe hardware:
+    one module for software timed analog output (NIXSeriesAnalogOutput) to position e.g. a scanner to a specific
     position and a hardware timed module for in and output (NIXSeriesFiniteSamplingIO) to realize 1D/2D scans.
+
+    As an example, the NI card can be connected to three scanning stages to realize an XYZ confocal scanner.
+    In this case, there are three axes: x, y, and z. For calibration to meters, position ranges need to be
+    specified for all axes.
+
+    The module can also be used without calibration to meters. This is useful for scanning the frequency of a laser
+    for example.
+
+    Both functions should not be mixed - a confocal scanner and e.g. a laser scanner should be configured
+    separately. Either all axes are calibrated (e.g. to m) or all axes are uncalibrated and set in V.
 
     Example config for copy-paste:
 
@@ -60,11 +69,7 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 APD1: 'PFI8'
                 APD2: 'PFI9'
                 AI0: 'ai0'
-            position_ranges: # in m
-                x: [-100e-6, 100e-6]
-                y: [0, 200e-6]
-                z: [-100e-6, 100e-6]
-            frequency_ranges: #Aka values written/retrieved per second; Check with connected HW for sensible constraints.
+            frequency_ranges: # values written/retrieved per second: check with connected HW for sensible constraints.
                 x: [1, 5000]
                 y: [1, 5000]
                 z: [1, 1000]
@@ -72,23 +77,29 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 x: [1, 10000]
                 y: [1, 10000]
                 z: [2, 1000]
+            position_unit: 'm'  # set to V to use without calibration
+            position_ranges:  # only required if position_unit is not V
+                x: [-100e-6, 100e-6]
+                y: [0, 200e-6]
+                z: [-100e-6, 100e-6]
+            move_velocity: 400e-6 # in position units, avoids jumps from position to position
             backwards_line_resolution: 50 # optional
-            move_velocity: 400e-6 #m/s; This speed is used for scanner movements and avoids jumps from position to position.
     """
-
-    # TODO What about channels which are not "calibrated" to 'm', e.g. just use 'V'?
     # TODO Bool indicators deprecated; Change in scanning probe toolchain
 
     _ni_finite_sampling_io = Connector(name='scan_hardware', interface='FiniteSamplingIOInterface')
     _ni_ao = Connector(name='analog_output', interface='ProcessSetpointInterface')
 
     _ni_channel_mapping: Dict[str, str] = ConfigOption(name='ni_channel_mapping', missing='error')
-    _position_ranges: Dict[str, list[float]] = ConfigOption(name='position_ranges', missing='error')
     _frequency_ranges: Dict[str, list[float]] = ConfigOption(name='frequency_ranges', missing='error')
     _resolution_ranges: Dict[str, list[float]] = ConfigOption(name='resolution_ranges', missing='error')
-
+    _position_unit: str = ConfigOption(name='position_unit', default='m', missing='warn')
+    _position_ranges: Dict[str, list[float]] = ConfigOption(name='position_ranges', default=dict())
+    __max_move_velocity: float = ConfigOption(name='maximum_move_velocity', default=np.nan)
     __backwards_line_resolution: int = ConfigOption(name='backwards_line_resolution', default=50)
-    __max_move_velocity: float = ConfigOption(name='maximum_move_velocity', default=400e-6)
+
+    __DEFAULT_MAX_MOVE_VELOCITY_M = 400e-6
+    __DEFAULT_MAX_MOVE_VELOCITY_NOT_M = 1.0
 
     _threaded = True  # Interfuse is by default not threaded.
 
@@ -124,6 +135,11 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
         ni_io: FiniteSamplingIOInterface = self._ni_finite_sampling_io()
         ni_ao: ProcessSetpointInterface = self._ni_ao()
 
+        if self._position_unit == 'm':
+            self.__max_move_velocity = self.__DEFAULT_MAX_MOVE_VELOCITY_M
+        else:
+            self.__max_move_velocity = self.__DEFAULT_MAX_MOVE_VELOCITY_NOT_M
+
         # check the configuration and create scanner constraints
         axes, channels = [], []
         for name, ni_channel in self._ni_channel_mapping.items():
@@ -141,27 +157,31 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
                 if ni_channel not in ni_ao.constraints.setpoint_channels:
                     raise ValueError(f'NI channel {ni_channel} is not configured on the NI analog output.')
                 try:
-                    position_range = self._position_ranges[name]
                     resolution_range = self._resolution_ranges[name]
                     frequency_range = self._frequency_ranges[name]
                 except KeyError:
-                    raise ValueError(f'No position, resolution or frequency limits configured for axis "{name}".')
-                unit = 'm'
-                axes.append(ScannerAxis(
-                    name=name,
-                    unit=unit,
-                    value_range=position_range,
-                    step_range=(0, abs(np.diff(position_range))),
-                    resolution_range=resolution_range,
-                    frequency_range=frequency_range
-                ))
+                    raise ValueError(f'Resolution or frequency limits must be configured for axis "{name}".')
 
                 voltage_range = ni_io.constraints.output_channel_limits[ni_channel]
                 if voltage_range != tuple(ni_ao.constraints.channel_limits[ni_channel]):
                     self.log.warning(f'NI analog output and finite sampling IO channel limits are not the same '
                                      f'for NI channel {ni_channel}. Adapt the configuration file.')
-                # store for conversion between position and voltage
+                # store for potential conversion between position and voltage
                 self._voltage_ranges[name] = voltage_range
+
+                position_range = self._position_ranges.get(name)
+                if self._position_unit != 'V' and position_range is None:
+                    raise ValueError(f'Position range must be configured for axis "{name}" if unit is not "V".')
+                else:
+                    position_range = voltage_range
+                axes.append(ScannerAxis(
+                    name=name,
+                    unit=self._position_unit,
+                    value_range=position_range,
+                    step_range=(0, abs(np.diff(position_range))),
+                    resolution_range=resolution_range,
+                    frequency_range=frequency_range
+                ))
 
             else:
                 raise ValueError(f'NI channel {ni_channel} is not configured on the NI finite sampling IO.')
@@ -679,14 +699,13 @@ class NiScanningProbeInterfuse(ScanningProbeInterface):
             raise NotImplementedError('Ni Scan arrays could not be initialized for given ScanData dimension')
 
     def __ao_cursor_write_loop(self):
-
+        """Calculate and set new positions for the NI AO based on the current position, the target and velocity."""
         t_start = time.perf_counter()
         try:
             current_pos_vec = self._pos_dict_to_vec(self.get_position())
 
             with self._thread_lock_cursor:
                 stop_loop = self._abort_cursor_move
-
 
                 target_pos_vec = self._pos_dict_to_vec(self._target_pos)
                 connecting_vec = target_pos_vec - current_pos_vec
